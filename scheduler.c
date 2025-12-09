@@ -79,55 +79,176 @@ int getCurrentBurst(Process *proc, int current_time)
     return burst;
 }
 
-int run_dispatcher(Process *procTable, size_t nprocs, int algorithm, int modality, int quantum)
-{
-
-    Process *_proclist;
-
+int run_dispatcher(Process *procTable, size_t nprocs, int algorithm, int modality, int quantum) {
+    
+    // El 'current_time' serà el temps virtual de la simulació.
+    int current_time = 0;
+    Process *current_proc = NULL;
+    size_t completed_procs = 0;
+    
+    // 1. Inicialització
     qsort(procTable, nprocs, sizeof(Process), compareArrival);
-
     init_queue();
-    size_t duration = getTotalCPU(procTable, nprocs) + 1;
+    
+    size_t duration = getTotalCPU(procTable, nprocs) + 1; // Temps total de CPU requerit + 1
 
-    for (int p = 0; p < nprocs; p++)
-    {
+    for (int p = 0; p < nprocs; p++) {
         procTable[p].lifecycle = malloc(duration * sizeof(int));
-        for (int t = 0; t < duration; t++)
-        {
+        for (int t = 0; t < duration; t++) {
             procTable[p].lifecycle[t] = -1;
         }
         procTable[p].waiting_time = 0;
         procTable[p].return_time = 0;
-        procTable[p].response_time = 0;
+        procTable[p].response_time = -1; // -1 per indicar que encara no s'ha respost
         procTable[p].completed = false;
     }
 
-    Process *current = NULL;
+    int next_arrival_index = 0; // Index del procés que encara no ha arribat
+    int quantum_counter = 0;
 
-    for (int t = 0; t < duration; t++)
-    {
-
-        // per cada unitat de temps afegit a la cua els processos que arriben
-        for (int p = 0; p < nprocs; p++)
-        {
-            // comparem si el temps es el mateix que el del process
-            if (procTable[p].arrive_time == t)
-            {
-                enqueue(&procTable[p]);
+    // 2. Bucle Principal de la Simulació
+    while (completed_procs < nprocs) {
+        
+        // A. Arribada de Processos
+        while (next_arrival_index < nprocs && procTable[next_arrival_index].arrive_time <= current_time) {
+            Process *p = &procTable[next_arrival_index];
+            enqueue(p);
+            next_arrival_index++;
+        }
+        
+        // B. Lògica de Planificació (Priorització)
+        
+        // 1. Per SJF, SJRT i PRIORITIES, reordenem la cua per assegurar el millor procés al capdavant.
+        if (algorithm == SJF || algorithm == PRIORITIES) {
+            Process *ready_list = transformQueueToList();
+            size_t queue_size = get_queue_size();
+            
+            if (ready_list != NULL) {
+                int (*comparator)(const void *, const void *) = NULL;
+                
+                if (algorithm == SJF) {
+                    // Ordenem per temps de ràfega (burst) total. La lògica SJRT es fa al punt C.
+                    comparator = compareBurst; 
+                } else if (algorithm == PRIORITIES) {
+                    // Prioritat: 0 és la més alta.
+                    comparator = comparePriority;
+                }
+                
+                if (comparator != NULL) {
+                    qsort(ready_list, queue_size, sizeof(Process), comparator);
+                    setQueueFromList(ready_list); // Reemplaça l'ordre de la cua
+                }
+                free(ready_list);
             }
         }
 
-        if ()
+        // C. Selecció del Pròxim Procés a Executar (Dispatcher)
+        
+        Process *next_proc_in_queue = NULL;
+        if (get_queue_size() > 0) {
+            next_proc_in_queue = dequeue();
+        }
+
+        if (current_proc == NULL && next_proc_in_queue != NULL) {
+            // Cap procés s'estava executant, assignem el de la cua.
+            current_proc = next_proc_in_queue;
+            quantum_counter = 0;
+        } else if (current_proc != NULL && next_proc_in_queue != NULL) {
+            // Un procés s'està executant, però n'hi ha un de nou a la cua.
+            bool should_preempt = false;
+            
+            // Lògica Preemptiva (SJRT / Priority Preemptive)
+            if (modality == PREEMPTIVE) {
+                if (algorithm == SJF) { // SJRT
+                    int current_remaining = current_proc->burst - getCurrentBurst(current_proc, current_time);
+                    int next_remaining = next_proc_in_queue->burst - getCurrentBurst(next_proc_in_queue, current_time);
+                    
+                    if (next_remaining < current_remaining) {
+                        should_preempt = true;
+                    }
+                } else if (algorithm == PRIORITIES) {
+                    if (next_proc_in_queue->priority < current_proc->priority) {
+                        should_preempt = true;
+                    }
+                }
+            }
+            
+            if (should_preempt) {
+                // El procés actual és previngut, torna a la cua.
+                enqueue(current_proc);
+                current_proc = next_proc_in_queue;
+                quantum_counter = 0;
+            } else {
+                // El procés actual continua executant-se, el procés nou torna a la cua.
+                enqueue(next_proc_in_queue); 
+            }
+        } else if (current_proc == NULL && get_queue_size() == 0 && next_arrival_index < nprocs) {
+            // No hi ha processos llestos i no hi ha procés executant-se. La CPU està OCIOSA.
+            // Avancem el temps al pròxim esdeveniment d'arribada.
+            current_time = procTable[next_arrival_index].arrive_time;
+            continue;
+        }
+        
+        if (completed_procs == nprocs) {
+            break; 
+        }
+
+        // D. Execució
+        if (current_proc != NULL) {
+            // Marcar estat d'execució
+            current_proc->lifecycle[current_time] = Running;
+
+            // Càlcul del temps de resposta (si és la primera vegada que s'executa)
+            if (current_proc->response_time == -1) {
+                current_proc->response_time = current_time - current_proc->arrive_time;
+            }
+            
+            // Càlcul del temps d'espera per als altres processos
+            Process *waiting_list = transformQueueToList();
+            if (waiting_list != NULL) {
+                size_t queue_size = get_queue_size();
+                for (int i = 0; i < queue_size; i++) {
+                    waiting_list[i].waiting_time++;
+                }
+                setQueueFromList(waiting_list); 
+                free(waiting_list);
+            }
+            
+            // El procés executa una unitat de temps
+            int executed_burst = getCurrentBurst(current_proc, current_time + 1);
+            quantum_counter++;
+
+            // E. Comprovació de Finalització o Preempció (Round Robin)
+            
+            if (executed_burst >= current_proc->burst) {
+                // Procés completat
+                current_proc->lifecycle[current_time] = Finished;
+                current_proc->completed = true;
+                current_proc->return_time = current_time + 1 - current_proc->arrive_time;
+                completed_procs++;
+                current_proc = NULL;
+            } else if (algorithm == RR && quantum_counter == quantum) {
+                // Round Robin: Quàntum esgotat
+                enqueue(current_proc); // Torna a la cua
+                current_proc = NULL;
+            } 
+            // La lògica de no-preempció s'implica en la no-execució del bloc 'else if (should_preempt)' anterior.
+
+        }
+        
+        current_time++;
+        if (current_time >= duration) break; // Límite de temps
     }
 
-    printSimulation(nprocs, procTable, duration);
-
-    for (int p = 0; p < nprocs; p++)
-    {
+    // 3. Impressió de Resultats i Neteja
+    printSimulation(nprocs, procTable, current_time);
+    printMetrics(current_time, nprocs, procTable);
+    
+    for (int p = 0; p < nprocs; p++) {
         destroyProcess(procTable[p]);
     }
-
     cleanQueue();
+    
     return EXIT_SUCCESS;
 }
 
