@@ -211,8 +211,8 @@ int run_dispatcher(Process *procTable, size_t nprocs, int algorithm, int modalit
         if (current_time >= duration) break;
     }
 
-    printSimulation(nprocs, procTable, current_time);
-    printMetrics(current_time, nprocs, procTable);
+    printSimulation(nprocs, procTable, (size_t)current_time);
+    printMetrics((size_t)current_time, nprocs, procTable);
     
     for (int p = 0; p < nprocs; p++) {
         destroyProcess(procTable[p]);
