@@ -82,7 +82,8 @@ int getCurrentBurst(Process *proc, int current_time)
 int run_dispatcher(Process *procTable, size_t nprocs, int algorithm, int modality, int quantum) {
 
     int current_time = 0;
-    Process *current_proc = NULL;
+    Process *current_proc[2] = {NULL, NULL};
+    int quantum_counter[2] = {0, 0};
     size_t completed_procs = 0;
 
     qsort(procTable, nprocs, sizeof(Process), compareArrival);
@@ -102,16 +103,17 @@ int run_dispatcher(Process *procTable, size_t nprocs, int algorithm, int modalit
     }
 
     int next_arrival_index = 0;
-    int quantum_counter = 0;
 
     while (completed_procs < nprocs) {
 
+        /* Enqueue arrivals */
         while (next_arrival_index < nprocs && procTable[next_arrival_index].arrive_time <= current_time) {
             Process *p = &procTable[next_arrival_index];
             enqueue(p);
             next_arrival_index++;
         }
    
+        /* Sort ready queue if needed */
         if (algorithm == SJF || algorithm == PRIORITIES) {
             Process *ready_list = transformQueueToList();
             size_t queue_size = get_queue_size();
@@ -133,77 +135,79 @@ int run_dispatcher(Process *procTable, size_t nprocs, int algorithm, int modalit
             }
         }
 
-        Process *next_proc_in_queue = NULL;
-        if (get_queue_size() > 0) {
-            next_proc_in_queue = dequeue();
+        /* Fill idle CPUs */
+        for (int i = 0; i < 2 && get_queue_size() > 0; i++) {
+            if (current_proc[i] == NULL) {
+                current_proc[i] = dequeue();
+                quantum_counter[i] = 0;
+            }
         }
 
-        if (current_proc == NULL && next_proc_in_queue != NULL) {
-            current_proc = next_proc_in_queue;
-            quantum_counter = 0;
-        } else if (current_proc != NULL && next_proc_in_queue != NULL) {
-            bool should_preempt = false;
-
-            if (modality == PREEMPTIVE) {
-                if (algorithm == SJF) { // SJRT
-                    int current_remaining = current_proc->burst - getCurrentBurst(current_proc, current_time);
-                    int next_remaining = next_proc_in_queue->burst - getCurrentBurst(next_proc_in_queue, current_time);
-                    
-                    if (next_remaining < current_remaining) {
-                        should_preempt = true;
-                    }
-                } else if (algorithm == PRIORITIES) {
-                    if (next_proc_in_queue->priority < current_proc->priority) {
-                        should_preempt = true;
-                    }
-                }
-            }
-            
-            if (should_preempt) {
-                enqueue(current_proc);
-                current_proc = next_proc_in_queue;
-                quantum_counter = 0;
-            } else {
-                enqueue(next_proc_in_queue); 
-            }
-        } else if (current_proc == NULL && get_queue_size() == 0 && next_arrival_index < nprocs) {
+        /* If everything idle and pending arrivals, jump forward */
+        if (current_proc[0] == NULL && current_proc[1] == NULL && get_queue_size() == 0 && next_arrival_index < nprocs) {
             current_time = procTable[next_arrival_index].arrive_time;
             continue;
         }
-        
-        if (completed_procs == nprocs) {
-            break; 
+
+        /* Increment waiting time in ready queue */
+        Process *waiting_list = transformQueueToList();
+        if (waiting_list != NULL) {
+            size_t queue_size = get_queue_size();
+            for (int j = 0; j < (int)queue_size; j++) {
+                waiting_list[j].waiting_time++;
+            }
+            setQueueFromList(waiting_list); 
+            free(waiting_list);
         }
 
-        if (current_proc != NULL) {
-            current_proc->lifecycle[current_time] = Running;
-
-            if (current_proc->response_time == -1) {
-                current_proc->response_time = current_time - current_proc->arrive_time;
+        /* Execute each CPU slot */
+        for (int i = 0; i < 2; i++) {
+            if (current_proc[i] == NULL) {
+                continue;
             }
 
-            Process *waiting_list = transformQueueToList();
-            if (waiting_list != NULL) {
-                size_t queue_size = get_queue_size();
-                for (int i = 0; i < queue_size; i++) {
-                    waiting_list[i].waiting_time++;
+            /* Preemption check for SJRT/priorities */
+            if (modality == PREEMPTIVE && get_queue_size() > 0 && (algorithm == SJF || algorithm == PRIORITIES)) {
+                Process *candidate = peek();
+                if (candidate != NULL) {
+                    bool should_preempt = false;
+                    if (algorithm == SJF) {
+                        int current_remaining = current_proc[i]->burst - getCurrentBurst(current_proc[i], current_time);
+                        int next_remaining = candidate->burst - getCurrentBurst(candidate, current_time);
+                        if (next_remaining < current_remaining) {
+                            should_preempt = true;
+                        }
+                    } else if (algorithm == PRIORITIES) {
+                        if (candidate->priority < current_proc[i]->priority) {
+                            should_preempt = true;
+                        }
+                    }
+                    if (should_preempt) {
+                        enqueue(current_proc[i]);
+                        current_proc[i] = dequeue(); /* candidate */
+                        quantum_counter[i] = 0;
+                    }
                 }
-                setQueueFromList(waiting_list); 
-                free(waiting_list);
             }
-  
-            int executed_burst = getCurrentBurst(current_proc, current_time + 1);
-            quantum_counter++;
 
-            if (executed_burst >= current_proc->burst) {
-                current_proc->lifecycle[current_time] = Finished;
-                current_proc->completed = true;
-                current_proc->return_time = current_time + 1 - current_proc->arrive_time;
+            current_proc[i]->lifecycle[current_time] = Running;
+
+            if (current_proc[i]->response_time == -1) {
+                current_proc[i]->response_time = current_time - current_proc[i]->arrive_time;
+            }
+
+            int executed_burst = getCurrentBurst(current_proc[i], current_time + 1);
+            quantum_counter[i]++;
+
+            if (executed_burst >= current_proc[i]->burst) {
+                current_proc[i]->lifecycle[current_time] = Finished;
+                current_proc[i]->completed = true;
+                current_proc[i]->return_time = current_time + 1 - current_proc[i]->arrive_time;
                 completed_procs++;
-                current_proc = NULL;
-            } else if (algorithm == RR && quantum_counter == quantum) {
-                enqueue(current_proc); // Torna a la cua
-                current_proc = NULL;
+                current_proc[i] = NULL;
+            } else if (algorithm == RR && quantum_counter[i] == quantum) {
+                enqueue(current_proc[i]); // Torna a la cua
+                current_proc[i] = NULL;
             } 
         }
         
@@ -268,7 +272,7 @@ void printMetrics(size_t simulationCPUTime, size_t nprocs, Process *procTable)
 
     size_t baselineCPUTime = getTotalCPU(procTable, nprocs);
     double throughput = (double)nprocs / (double)simulationCPUTime;
-    double cpu_usage = (double)baselineCPUTime / (double)simulationCPUTime;
+    double cpu_usage = (double)baselineCPUTime / ((double)simulationCPUTime * 2);
 
     printf("= CPU (Usage): %lf\n", cpu_usage * 100);
     printf("= Throughput: %lf\n", throughput * 100);

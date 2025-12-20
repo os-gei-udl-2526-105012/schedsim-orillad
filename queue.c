@@ -28,6 +28,13 @@ int enqueue(Process* process){
     }
 }
 
+Process* peek(void){
+    if (elements <= 0){
+        return NULL;
+    }
+    return queue[0];
+}
+
 Process* dequeue(){
     if (elements <= 0){
         return NULL;
@@ -99,8 +106,6 @@ void setQueueFromList(Process* list){
     queue = new_queue;
     elements = new_elements;
 }
-
-
 
 
 
