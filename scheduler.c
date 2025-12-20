@@ -268,7 +268,7 @@ void printMetrics(size_t simulationCPUTime, size_t nprocs, Process *procTable)
 
     size_t baselineCPUTime = getTotalCPU(procTable, nprocs);
     double throughput = (double)nprocs / (double)simulationCPUTime;
-    double cpu_usage = (double)simulationCPUTime / (double)baselineCPUTime;
+    double cpu_usage = (double)baselineCPUTime / (double)simulationCPUTime;
 
     printf("= CPU (Usage): %lf\n", cpu_usage * 100);
     printf("= Throughput: %lf\n", throughput * 100);

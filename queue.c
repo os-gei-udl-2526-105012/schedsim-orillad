@@ -33,11 +33,12 @@ Process* dequeue(){
         return NULL;
     } else {
         Process* process = queue[0];
-        elements--;
-        queue = realloc(queue,(elements+1)*sizeof(Process));
-        for(int p=1; p<=elements; p++){
-            queue[p-1]=queue[p];
+        for (int p = 1; p < elements; p++) {
+            queue[p-1] = queue[p];
         }
+        elements--;
+        queue = realloc(queue, (elements + 1) * sizeof(Process*));
+        queue[elements] = NULL;
         return process;
     }
 }
@@ -66,20 +67,38 @@ char* queueToString(){
 }
 
 Process* transformQueueToList(){
-    Process* _list = malloc(sizeof(elements-1)*sizeof(Process));
-    for (int i=0; i<elements; i++){
-        _list[i]=*queue[i];
+    if (elements == 0) {
+        return NULL;
     }
-    return _list;
+    Process* _list = malloc(elements * sizeof(Process));
+    for (int i = 0; i < elements; i++){
+        _list[i] = *queue[i];
+    }
+    return _list; 
 }
 
 void setQueueFromList(Process* list){
-    for (int i=0; i<elements; i++){
-        *(queue[i])=list[i];
+    if (list == NULL || elements == 0) {
+        return;
     }
+    Process **new_queue = malloc((elements + 1) * sizeof(Process*));
+    size_t new_elements = 0;
+
+    for (size_t i = 0; i < elements; i++) {
+        for (size_t j = 0; j < elements; j++) {
+            if (queue[j]->id == list[i].id) {
+                *(queue[j]) = list[i];
+                new_queue[new_elements++] = queue[j];
+                break;
+            }
+        }
+    }
+
+    new_queue[new_elements] = NULL;
+    free(queue);
+    queue = new_queue;
+    elements = new_elements;
 }
-
-
 
 
 
